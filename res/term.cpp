@@ -1,6 +1,6 @@
 #ifndef TERM_CPP
 #define TERM_CPP
-#include "Term.h"
+#include "term.h"
 #include <iostream>
 #include <fstream>
 #include<sstream>
@@ -9,13 +9,17 @@
 #include <stack>
 
 #define UNDEFINED 0x7fffffff
+#define nullptr NULL
 
 #ifndef DEBUG_MODE
 #define DEBUG_MODE 1
 #endif
 
-std::ifstream file_input("input.txt");
-std::ofstream file_output("output.txt");
+FILE *fp_in;
+FILE *fp_out;
+
+//std::ifstream file_input("input.txt");
+//std::ofstream file_output("output.txt");
 
 bool isnumber(const std::string &str) {
 	size_t i;
@@ -500,13 +504,65 @@ void Term::print() {
 
 bool execute(Activation_Record* aclink, Term *t);
 
+bool para_is_function(std::string fun_name,Term *t)
+{
+	/*
+	if (t->kind == Block)
+	{
+		std::list<Term *>::iterator itor = t->sons.begin();
+		while (itor != t->sons.end())
+		{
+			if (para_is_function(fun_name, *itor))
+			{
+				return true;
+			}
+			itor++;
+		}
+	}
+	else if(t->kind == Function)
+	{
+		std::list<Term *>::iterator itor = t->sons.begin();
+		while ((*itor)->kind != Block)
+		{
+			itor++;
+		}
+		return para_is_function(fun_name, *itor);
+	}
+	else
+	{
+
+	}
+	*/
+	if (t->subtype == Call || t->subtype == Apply)
+	{
+		std::list<Term *>::iterator itor = t->sons.begin();
+		if (fun_name == (*itor)->name)return true;
+	}
+	if (!t->sons.empty())
+	{
+		std::list<Term *>::iterator itor = t->sons.begin();
+		while (itor!=t->sons.end())
+		{
+			if (para_is_function(fun_name,*itor))
+			{
+				return true;
+			}
+			itor++;
+		}
+	}
+	return false;
+}
+
 bool define_function(Activation_Record* aclink,Term *t)
 {
 	function new_fun;
 	std::list<Term *>::iterator itor = t->sons.begin();
 	new_fun.name = (*itor)->name;
-	new_fun.access_link = aclink;
+	new_fun.access_link = new Activation_Record;
 	itor++;
+
+	Term *block = t->sons.back();
+
 	while (itor!=t->sons.end())
 	{
 		if ((*itor)->kind ==Block)
@@ -520,26 +576,36 @@ bool define_function(Activation_Record* aclink,Term *t)
 			return false;
 		}
 		parameter para;
-		para.type = 0;
 		para.name = (*itor)->name;
+		if (para_is_function(para.name,block))
+		{
+			para.type = 1;
+		}
+		else
+		{
+			para.type = 0;
+		}
 		new_fun.paras.push_back(para);
 		itor++;
 	}
 	aclink->funs.push_back(new_fun);
+	*new_fun.access_link = Activation_Record(aclink);//定义函数之后才拷贝，这样才能允许递归调用
 	return true;
 }
 
-bool read_var(Activation_Record* aclink, std::string name, std::istream& input)
+bool read_var(Activation_Record* aclink, std::string name)
 {
 	int x;
-	input >> x;
+	fscanf(fp_in, "%d", &x);
+	//input >> x;
 	while (aclink != NULL)
 	{
 		for (int i = 0; i < aclink->vars.size(); i++)
 		{
-			if (aclink->vars[i].name == name)
+			if (aclink->vars[i]->name == name)
 			{
-				aclink->vars[i].value = x;
+				aclink->vars[i]->var_value.value_type = 0;
+				aclink->vars[i]->var_value.num_value = x;
 				return true;
 			}
 		}
@@ -549,15 +615,26 @@ bool read_var(Activation_Record* aclink, std::string name, std::istream& input)
 }
 
 
-bool get_varvalue(Activation_Record* aclink, std::string name, int &value)
+bool get_varvalue(Activation_Record* aclink, std::string name, Value &value)
 {
 	while (aclink != NULL)
 	{
 		for (int i = 0; i < aclink->vars.size(); i++)
 		{
-			if (aclink->vars[i].name == name)
+			if (aclink->vars[i]->name == name)
 			{
-				value = aclink->vars[i].value;
+				value = aclink->vars[i]->var_value;
+				return true;
+			}
+		}
+		for (int i = 0; i < aclink->funs.size(); i++)
+		{
+			if (aclink->funs[i].name == name)
+			{
+				value.value_type = 1;
+				value.access_link = aclink->funs[i].access_link;
+				value.function_tree = aclink->funs[i].function_tree;
+				value.paras = aclink->funs[i].paras;
 				return true;
 			}
 		}
@@ -572,28 +649,29 @@ bool define_var(Activation_Record* aclink, std::string name)
 {
 	for (int i = 0; i < aclink->vars.size(); i++)
 	{
-		if (aclink->vars[i].name == name)
+		if (aclink->vars[i]->name == name)
 		{
 			std::cout << "Duplicate Defination!" << std::endl;
 			return false;
 		}
 	}
-	variable newvar;
-	newvar.name = name;
-	newvar.value = UNDEFINED;
+	variable* newvar=new variable;
+	newvar->name = name;
+	newvar->var_value.value_type = 0;
+	newvar->var_value.num_value = UNDEFINED;
 	aclink->vars.push_back(newvar);
 	return true;
 }
 
-bool assign_var(Activation_Record* aclink, std::string name, int value)
+bool assign_var(Activation_Record* aclink, std::string name, Value value)
 {
 	while (aclink != NULL)
 	{
 		for (int i = 0; i < aclink->vars.size(); i++)
 		{
-			if (aclink->vars[i].name == name)
+			if (aclink->vars[i]->name == name)
 			{
-				aclink->vars[i].value = value;
+				aclink->vars[i]->var_value = value;
 				return true;
 			}
 		}
@@ -604,7 +682,7 @@ bool assign_var(Activation_Record* aclink, std::string name, int value)
 }
 
 
-bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
+bool evaluate_expr(Activation_Record* aclink, Term* t, Value &value)
 {
 	if (t->kind != Expr)
 	{
@@ -613,7 +691,8 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 	}
 	if (t->subtype == Number)
 	{
-		value = t->number;
+		value.value_type = 0;
+		value.num_value = t->number;
 		return true;
 	}
 	if (t->subtype == VarName)
@@ -622,7 +701,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 	}
 	if (t->subtype == Plus)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator i = t->sons.begin();
 		if (evaluate_expr(aclink, *i, lvalue))
 		{
@@ -634,7 +713,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 			}
 			if (evaluate_expr(aclink, *i, rvalue))
 			{
-				value = lvalue + rvalue;
+				value.num_value = lvalue.num_value + rvalue.num_value;
 				return true;
 			}
 			else return false;
@@ -644,7 +723,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 
 	if (t->subtype == Minus)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator i = t->sons.begin();
 		if (evaluate_expr(aclink, *i, lvalue))
 		{
@@ -656,7 +735,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 			}
 			if (evaluate_expr(aclink, *i, rvalue))
 			{
-				value = lvalue - rvalue;
+				value.num_value = lvalue.num_value - rvalue.num_value;
 				return true;
 			}
 			else return false;
@@ -666,7 +745,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 
 	if (t->subtype == Mult)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator i = t->sons.begin();
 		if (evaluate_expr(aclink, *i, lvalue))
 		{
@@ -678,7 +757,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 			}
 			if (evaluate_expr(aclink, *i, rvalue))
 			{
-				value = lvalue * rvalue;
+				value.num_value = lvalue.num_value * rvalue.num_value;
 				return true;
 			}
 			else return false;
@@ -688,7 +767,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 
 	if (t->subtype == Div)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator i = t->sons.begin();
 		if (evaluate_expr(aclink, *i, lvalue))
 		{
@@ -700,7 +779,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 			}
 			if (evaluate_expr(aclink, *i, rvalue))
 			{
-				value = lvalue / rvalue;
+				value.num_value = lvalue.num_value / rvalue.num_value;
 				return true;
 			}
 			else return false;
@@ -710,7 +789,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 
 	if (t->subtype == Mod)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator i = t->sons.begin();
 		if (evaluate_expr(aclink, *i, lvalue))
 		{
@@ -722,7 +801,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 			}
 			if (evaluate_expr(aclink, *i, rvalue))
 			{
-				value = lvalue % rvalue;
+				value.num_value = lvalue.num_value % rvalue.num_value;
 				return true;
 			}
 			else return false;
@@ -735,6 +814,7 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 		Activation_Record* find_function = aclink;
 		while (find_function != NULL)
 		{
+			//find function
 			for (int i = 0; i < find_function->funs.size(); i++)
 			{
 				std::list<Term*>::iterator itor = t->sons.begin();
@@ -754,13 +834,92 @@ bool evaluate_expr(Activation_Record* aclink, Term* t, int &value)
 						if (find_function->funs[i].paras[j].type == 0)
 						{
 							define_var(fun_aclink, para_name);
-							int para_value;
+							Value para_value;
 							evaluate_expr(aclink, (*itor), para_value);
 							assign_var(fun_aclink, para_name, para_value);
+						}
+						else
+						{
+							function new_fun;
+							std::string fun_name = (*itor)->name;
+							bool is_found_fun = 0;
+							Activation_Record* find_para_function = aclink;
+							while (find_para_function != NULL)
+							{
+								for (int i = 0; i < find_para_function->funs.size(); i++)
+								{
+									std::list<Term*>::iterator itor = t->sons.begin();
+									if (find_para_function->funs[i].name == fun_name)
+									{
+										new_fun = find_para_function->funs[i];
+										is_found_fun = 1;
+										break;
+									}
+								}
+								if (is_found_fun)break;
+								find_para_function = find_para_function->access_link;
+							}
+							new_fun.name = para_name;
+							fun_aclink->funs.push_back(new_fun);
 						}
 						itor++;
 					}
 					execute(fun_aclink, find_function->funs[i].function_tree);
+					value = fun_aclink->return_value;
+					return true;
+				}
+			}
+			//find var function
+			for (int i = 0; i < find_function->vars.size(); i++)
+			{
+				std::list<Term*>::iterator itor = t->sons.begin();
+				if (find_function->vars[i]->name == (*itor)->name && find_function->vars[i]->var_value.value_type == 1)
+				{
+					if (t->sons.size() - 1 != find_function->vars[i]->var_value.paras.size())
+					{
+						std::cout << "Numbers of parameters do not match!" << std::endl;
+						return false;
+					}
+					Activation_Record* fun_aclink = new Activation_Record();
+					fun_aclink->access_link = find_function->vars[i]->var_value.access_link;
+					itor++;
+					for (int j = 0; j < find_function->vars[i]->var_value.paras.size(); j++)
+					{
+						std::string para_name = find_function->vars[i]->var_value.paras[j].name;
+						if (find_function->vars[i]->var_value.paras[j].type == 0)
+						{
+							define_var(fun_aclink, para_name);
+							Value para_value;
+							evaluate_expr(aclink, (*itor), para_value);
+							assign_var(fun_aclink, para_name, para_value);
+						}
+						else
+						{
+							function new_fun;
+							std::string fun_name = (*itor)->name;
+							bool is_found_fun = 0;
+							Activation_Record* find_para_function = aclink;
+							while (find_para_function != NULL)
+							{
+								for (int i = 0; i < find_para_function->funs.size(); i++)
+								{
+									std::list<Term*>::iterator itor = t->sons.begin();
+									if (find_para_function->funs[i].name == fun_name)
+									{
+										new_fun = find_para_function->funs[i];
+										is_found_fun = 1;
+										break;
+									}
+								}
+								if (is_found_fun)break;
+								find_para_function = find_para_function->access_link;
+							}
+							new_fun.name = para_name;
+							fun_aclink->funs.push_back(new_fun);
+						}
+						itor++;
+					}
+					execute(fun_aclink, find_function->vars[i]->var_value.function_tree);
 					value = fun_aclink->return_value;
 					return true;
 				}
@@ -776,7 +935,7 @@ bool check_bool(Activation_Record* aclink, Term *t)
 {
 	if (t->subtype == Lt || t->subtype == Gt || t->subtype == Eq)
 	{
-		int lvalue, rvalue;
+		Value lvalue, rvalue;
 		std::list<Term*>::iterator itor = t->sons.begin();
 		evaluate_expr(aclink, *itor, lvalue);
 		itor++;
@@ -784,11 +943,11 @@ bool check_bool(Activation_Record* aclink, Term *t)
 		switch (t->subtype)
 		{
 		case Lt:
-			return lvalue < rvalue;
+			return lvalue.num_value < rvalue.num_value;
 		case Gt:
-			return lvalue > rvalue;
+			return lvalue.num_value > rvalue.num_value;
 		case Eq:
-			return lvalue == rvalue;
+			return lvalue.num_value == rvalue.num_value;
 		default:
 			break;
 		}
@@ -815,6 +974,7 @@ bool check_bool(Activation_Record* aclink, Term *t)
 			break;
 		}
 	}
+	return true;
 }
 
 
@@ -828,6 +988,7 @@ bool execute(Activation_Record* aclink, Term *t)
 		{
 			if (execute(aclink, *itor) == false)
 				return false;
+			if (aclink->is_returned == 1)return true;
 			itor++;
 		}
 	}
@@ -844,12 +1005,17 @@ bool execute(Activation_Record* aclink, Term *t)
 		{
 		case Declaration :
 			{
-				if ((*itor)->kind != Name)
+				while (itor != t->sons.end())
 				{
-					std::cout << "Declaration error!" << std::endl;
-					return false;
+					if ((*itor)->kind != Name)
+					{
+						std::cout << "Declaration error!" << std::endl;
+						return false;
+					}
+					var_name = (*itor)->name;
+					define_var(aclink, var_name);
+					itor++;
 				}
-				define_var(aclink, var_name);
 				break;
 			}
 		case Assign:
@@ -859,7 +1025,7 @@ bool execute(Activation_Record* aclink, Term *t)
 					std::cout << "Assignment error!" << std::endl;
 					return false;
 				}
-				int value;
+				Value value;
 				itor++;
 				if (evaluate_expr(aclink, *itor, value) == false)
 				{
@@ -870,17 +1036,18 @@ bool execute(Activation_Record* aclink, Term *t)
 			}
 		case Read:
 			{
-				read_var(aclink, var_name, file_input);
+				read_var(aclink, var_name);
 				break;
 			}
 		case Print:
 			{
-				int value;
+				Value value;
 				if (evaluate_expr(aclink, *itor, value) == false)
 				{
 					return false;
 				}
-				file_output << value << " ";
+				fprintf(fp_out, "%d ",value.num_value);
+				//file_output << value.num_value << " ";
 				break;
 			}
 		case If:
@@ -941,39 +1108,69 @@ bool execute(Activation_Record* aclink, Term *t)
 			}
 		case Call:
 			{
-				for (int i = 0; i < aclink->funs.size(); i++)
+				Activation_Record* find_function = aclink;
+				while (find_function != NULL)
 				{
-					std::list<Term*>::iterator itor = t->sons.begin();
-					if (aclink->funs[i].name == (*itor)->name)
+					for (int i = 0; i < find_function->funs.size(); i++)
 					{
-						if (t->sons.size() - 1 != aclink->funs[i].paras.size())
+						std::list<Term*>::iterator itor = t->sons.begin();
+						if (find_function->funs[i].name == (*itor)->name)
 						{
-							std::cout << "Numbers of parameters do not match!" << std::endl;
-							return false;
-						}
-						Activation_Record* fun_aclink = new Activation_Record();
-						fun_aclink->access_link = aclink->funs[i].access_link;
-						itor++;
-						for (int j = 0; j < aclink->funs[i].paras.size(); j++)
-						{
-							std::string para_name = aclink->funs[i].paras[j].name;
-							if (aclink->funs[i].paras[j].type == 0)
+							if (t->sons.size() - 1 != find_function->funs[i].paras.size())
 							{
-								define_var(fun_aclink, para_name);
-								int para_value;
-								evaluate_expr(aclink, (*itor), para_value);
-								assign_var(fun_aclink, para_name, para_value);
+								std::cout << "Numbers of parameters do not match!" << std::endl;
+								return false;
 							}
+							Activation_Record* fun_aclink = new Activation_Record();
+							fun_aclink->access_link = find_function->funs[i].access_link;
 							itor++;
+							for (int j = 0; j < find_function->funs[i].paras.size(); j++)
+							{
+								std::string para_name = find_function->funs[i].paras[j].name;
+								if (find_function->funs[i].paras[j].type == 0)
+								{
+									define_var(fun_aclink, para_name);
+									Value para_value;
+									evaluate_expr(aclink, (*itor), para_value);
+									assign_var(fun_aclink, para_name, para_value);
+								}
+								else
+								{
+									function new_fun;
+									std::string fun_name = (*itor)->name;
+									bool is_found_fun = 0;
+									Activation_Record* find_para_function = aclink;
+									while (find_para_function != NULL)
+									{
+										for (int i = 0; i < find_para_function->funs.size(); i++)
+										{
+											std::list<Term*>::iterator itor = t->sons.begin();
+											if (find_para_function->funs[i].name == fun_name)
+											{
+												new_fun = find_para_function->funs[i];
+												is_found_fun = 1;
+												break;
+											}
+										}
+										if (is_found_fun)break;
+										find_para_function = find_para_function->access_link;
+									}
+									new_fun.name = para_name;
+									fun_aclink->funs.push_back(new_fun);
+								}
+								itor++;
+							}
+							execute(fun_aclink, find_function->funs[i].function_tree);
+							return true;
 						}
-						execute(fun_aclink, aclink->funs[i].function_tree);
 					}
+					find_function = find_function->access_link;
 				}
 				break;
 			}
 		case Return:
 			{
-				int return_value;
+				Value return_value;
 				evaluate_expr(aclink, *itor, return_value);
 				aclink->is_returned = 1;
 				aclink->return_value = return_value;
@@ -993,14 +1190,17 @@ bool execute(Activation_Record* aclink, Term *t)
 using namespace std;
 int main()
 {
-	ifstream input("innerFact.mini");
+	fp_in=fopen("input.txt","r");
+	fp_out=fopen("output.txt","w");
+
+	ifstream input("program.txt");
 	Term *t = parse(input);
 	std::cout << "Parsing Finished\n\n";
 	input.close();
 	Activation_Record* root_link=new Activation_Record();
 	execute(root_link,t);
-	file_input.close();
-	file_output.close();
+	//file_input.close();
+	//file_output.close();
 	//getchar();
 }
 #endif
