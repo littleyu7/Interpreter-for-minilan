@@ -14,4 +14,4 @@ term.exe
 ###测试例子
 program.txt以及test中的程序
 ###说明
-目前只实现了basic language，尚未实现high-order function和GC。
+目前只实现了basic language，和high-order function，尚未实现GC。
